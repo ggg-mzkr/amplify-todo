@@ -1,12 +1,120 @@
-import React from 'react';
-import Amplify, { Auth } from "aws-amplify";
-import awsmobile from "./aws-exports";
-import { withAuthenticator } from "aws-amplify-react";
+import React, {useState, useEffect, useReducer } from 'react';
+import Amplify, { Auth } from 'aws-amplify';
+import API, { graphqlOperation } from '@aws-amplify/api';
+import { withAuthenticator } from 'aws-amplify-react'
+import { createTodo } from './graphql/mutations';
+import { listTodos } from './graphql/queries';
+import { onCreateTodo } from './graphql/subscriptions';
 
-// Amplifyの設定を行う
-Amplify.configure(awsmobile)
+import awsconfig from './aws-exports';
 
-// SingUp時に、メールアドレスとパスワードを要求する
+Amplify.configure(awsconfig);
+
+const GET = 'GET';
+const CREATE = 'CREATE';
+
+const initialState = {
+  todos: [],
+};
+
+const reducer = (state, action) => {
+  switch (action.type) {
+    case GET:
+      return {...state, todos: action.todos};
+    case CREATE:
+      return {...state, todos:[...state.todos, action.todo]}
+    default:
+      return state;
+  }
+};
+
+function signOut(){
+  Auth.signOut()
+      .then()
+      .catch();
+}
+
+function App() {
+  const [state, dispatch] = useReducer(reducer, initialState);
+  const [user, setUser] = useState(null);
+  const [title, setTitle] = useState(null);
+  const [detail, setDetail] = useState(null);
+
+  function onChange(e){
+    if(e.target.id === 'title'){
+      setTitle(e.target.value);
+    }
+    if(e.target.id === 'detail'){
+      setDetail(e.target.value);
+    }
+  }
+
+  async function create(e) {
+    e.preventDefault();
+    setTitle('')
+    setDetail('')
+    const todo = { title:title, detail:detail };
+    await API.graphql(graphqlOperation(createTodo, { input: todo }));
+  }
+
+  useEffect(() => {
+
+    async function getUser(){
+      return Auth.currentUserInfo();
+    }
+
+    async function getData() {
+      return API.graphql(graphqlOperation(listTodos));
+    }
+
+    const subscription = API.graphql(graphqlOperation(onCreateTodo)).subscribe({
+      next: (eventData) => {
+        const todo = eventData.value.data.onCreateTodo;
+        dispatch({ type: CREATE, todo });
+      }
+    });
+
+    getUser().then((user) => setUser(user));
+
+    getData().then(todoData => dispatch({ type: GET, todos: todoData.data.listTodos.items }));
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  return (
+      <div className="App">
+        <p>user: {user!= null && user.username}</p>
+        <button onClick={signOut}>Sign out</button>
+        <div>
+          <table border="1" style={{'border-collapse': 'collapse'}}>
+            <tr>
+              <th>No</th>
+              <th>Title</th>
+              <th>Detail</th>
+              <th/>
+            </tr>
+            <tr>
+              <td/>
+              <td><input id='title' type='text' onChange={onChange} value={title}/></td>
+              <td><input id='detail' type='text' onChange={onChange} value={detail}/></td>
+              <th><button onClick={create}>New</button></th>
+            </tr>
+            {state.todos && state.todos.map((todo,index) => {
+              return(
+                  <tr key={todo.id}>
+                    <td>{index + 1}</td>
+                    <td>{todo.title}</td>
+                    <td>{todo.detail}</td>
+                    <td>{todo.createdAt}</td>
+                  </tr>
+              )
+            })}
+          </table>
+        </div>
+      </div>
+  );
+}
+
 const signUpConfig = {
   header: 'Sign Up',
   hideAllDefaults: true,
@@ -36,23 +144,6 @@ const signUpConfig = {
   ]
 }
 
-// SingOut
-const signOut = () => {
-  Auth.signOut()
-      .then()
-      .catch();
-}
-
-function App() {
-  return (
-      <React.Fragment>
-        <button onClick={signOut}>Sign out</button>
-        <div>
-          Hello World
-        </div>
-      </React.Fragment>
-  );
-}
-
-// Appコンポーネントをラップする
-export default withAuthenticator(App,{signUpConfig});
+export default withAuthenticator(App, {
+  signUpConfig: signUpConfig
+});
